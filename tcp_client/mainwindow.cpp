@@ -6,10 +6,27 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    ui->pushButton->setStyleSheet("background-color:rgb(145,200,200);");
+    ui->pushButton_2->setStyleSheet("background-color:rgb(180,218,218);");
     tcpSocket = new QTcpSocket(this);
     connect(tcpSocket,SIGNAL(readyRead()),this,SLOT(readMessage()));
     connect(tcpSocket,SIGNAL(error(QAbstractSocket::SocketError)),
-             this,SLOT(displayError(QAbstractSocket::SocketError)));
+            this,SLOT(displayError(QAbstractSocket::SocketError)));
+
+    ui->customPlot->addGraph(); // blue line
+    ui->customPlot->graph(0)->setPen(QPen(QColor(40, 110, 255)));
+    ui->customPlot->addGraph(); // red line
+    ui->customPlot->graph(1)->setPen(QPen(QColor(255, 110, 40)));
+
+    QSharedPointer<QCPAxisTickerTime> timeTicker(new QCPAxisTickerTime);
+    timeTicker->setTimeFormat("%h:%m:%s");
+    ui->customPlot->xAxis->setTicker(timeTicker);
+    ui->customPlot->axisRect()->setupFullAxesBox();
+    ui->customPlot->yAxis->setRange(-100, 0);
+
+    // make left and bottom axes transfer their ranges to right and top axes:
+    connect(ui->customPlot->xAxis, SIGNAL(rangeChanged(QCPRange)), ui->customPlot->xAxis2, SLOT(setRange(QCPRange)));
+    connect(ui->customPlot->yAxis, SIGNAL(rangeChanged(QCPRange)), ui->customPlot->yAxis2, SLOT(setRange(QCPRange)));
 }
 
 MainWindow::~MainWindow()
@@ -27,26 +44,42 @@ void MainWindow::newConnect()
     //连接到主机，这里从界面获取主机地址和端口号
 }
 
+#define BSSID_raw 3
+char BSSID[BSSID_raw][18]{"20:0c:c8:4a:df:fa","fc:d7:33:4a:5c:c8","10:08:b1:d9:93:eb"};//SSID:Robot-AN-101,Robot-IS-108,WW
+float RSSIValue[BSSID_raw]={0.0};
+QByteArray byteArray;
 void MainWindow::readMessage()
 {
-    //qDebug() <<"error!";
-   // qDebug() <<tcpSocket->readAll();
-//    QDataStream in(tcpSocket);
-//    in.setVersion(QDataStream::Qt_4_6);
-//    //设置数据流版本，这里要和服务器端相同
-//    if(blockSize==0) //如果是刚开始接收数据
-//    {
-//        //判断接收的数据是否有两字节，也就是文件的大小信息
-//        //如果有则保存到blockSize变量中，没有则返回，继续接收数据
-//        if(tcpSocket->bytesAvailable() < (int)sizeof(quint16)) return;
-//        in >> blockSize;
-//    }
-//    if(tcpSocket->bytesAvailable() < blockSize) return;
-//    //如果没有得到全部的数据，则返回，继续接收数据
-//    in >> message;
-//    //将接收到的数据存放到变量中
-    ui->textBrowser->append(tcpSocket->readAll());
-//    //显示接收到的数据
+    if(tcpSocket->bytesAvailable()>0)
+    {
+        const QByteArray data = tcpSocket->readAll();
+        ui->textBrowser->append(data);
+
+        for(quint8 i=0; i<BSSID_raw; i++)
+        {
+            if(data.indexOf(BSSID[i]) < 0)//判断此wifi是否在范围内
+            {
+                RSSIValue[i] = -99.0;
+            }
+            else
+            {
+                byteArray = data.mid(data.indexOf(BSSID[i]) , data.size()-data.indexOf(BSSID[i]));
+                RSSIValue[i] = byteArray.mid(byteArray.indexOf("signal:") + 8,
+                                             byteArray.indexOf("SSID:") - byteArray.indexOf("signal:") - 14).toFloat();
+            }
+        }
+        qDebug()<<RSSIValue[0]<<RSSIValue[1]<<RSSIValue[2];
+
+        QTime time(QTime::currentTime());//获取当前时间
+        double key = time.hour()*3600 + time.minute()*60 + time.second() + time.msec()*0.001;
+
+        ui->customPlot->graph(0)->addData(key, RSSIValue[0]);
+        ui->customPlot->graph(1)->addData(key, RSSIValue[1]);
+
+        // make key axis range scroll with the data (at a constant range size of 8):
+        ui->customPlot->xAxis->setRange(key, 40, Qt::AlignRight);
+        ui->customPlot->replot();
+    }
 }
 
 void MainWindow::displayError(QAbstractSocket::SocketError)
@@ -63,6 +96,7 @@ void MainWindow::on_pushButton_clicked() //连接按钮
         newConnect(); //请求连接
         openCloseFlag = true;
         ui->pushButton->setText("断开服务器");
+        ui->pushButton->setStyleSheet("background-color:rgb(255,128,128);");
     }
     else
     {
@@ -70,11 +104,12 @@ void MainWindow::on_pushButton_clicked() //连接按钮
         tcpSocket->disconnectFromHost();
         openCloseFlag = false;
         ui->pushButton->setText("连接服务器");
+        ui->pushButton->setStyleSheet("background-color:rgb(145,200,200);");
     }
 
 }
 
 void MainWindow::on_pushButton_2_clicked()
 {
-    tcpSocket->write(QByteArray (ui->send_lineEdit->text().toLatin1()));
+    tcpSocket->write(ui->send_lineEdit->text().toLatin1());
 }
